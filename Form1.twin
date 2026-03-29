@@ -1,0 +1,23 @@
+[Description("")]
+[FormDesignerId("0E7EFE94-CBDA-43D5-AD34-F88D7EAC6C98")]
+[PredeclaredId]
+Class Form1
+
+    
+    Private WithEvents cMBAsync As cMsgBoxAsync
+    
+    Private n As Long
+    Private Sub Command1_Click() Handles Command1.Click
+        n += 1
+        If cMBAsync Is Nothing Then Set cMBAsync = New cMsgBoxAsync
+        cMBAsync.Show "MessageBox " & n, vbYesNo, "t", n
+    End Sub
+    Private Sub cMBAsync_GotResult(ByVal nID As Long, ByVal result As VbMsgBoxResult) Handles cMBAsync.GotResult
+        Debug.Print "MsgBox id=" & nID & " result=" & result
+    End Sub
+    
+    Private Sub Form_Unload(Cancel As Integer) Handles Form.Unload
+        ' Needed when running from the IDE:
+        ' If cMBAsync IsNot Nothing Then cMBAsync.CloseAll()
+    End Sub
+End Class

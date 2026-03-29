@@ -1,0 +1,159 @@
+Public Class cMsgBoxAsync
+Option Explicit
+'******************************************************************************
+' cMsgBoxAsync v1.0
+' by Jon Johnson 
+'
+'Last update: 29 Mar 2026
+'
+'A simple class to display a MsgBox asychronously, so execution does not stop.
+' Class is reusable/supports multiple boxes.
+' You may declare this WithEvents. This is optional, to get the results.
+'
+' Methods:
+'  .Show(MessageText[, Style, Title, ID]) - Display a MsgBox
+'  .CloseAll() - Close any open messages. These will have a result of 0.
+'  .OpenCount - Number of open messages.
+' Events:
+'   GotResult(ID, Result) - The result for the MsgBox with given ID.
+'
+' The Style and Result values are the standard VBx/tB constants.
+'
+' When this class is terminated, any open boxes are closed. These will have a result of 0.
+'
+' Thanks to VanGoghGaming for helping optimize the argument passing.
+'
+' **REQUIREMENTS**
+'   This class requires Windows Development Library for twinBASIC.
+'     References->Available packages
+'
+' **KNOWN ISSUE** 
+'    When running from the IDE, you must call .CloseAll when the class is 
+'    meant to unload (Form_Unload, app exit, etc), otherwise open messages
+'    will not be automatically closed. 
+'    Newer tB versions may have resolved the issue.
+'******************************************************************************
+
+    
+    
+Public Event GotResult(ByVal nID As Long, ByVal result As VbMsgBoxResult)
+    
+Private Type MsgAsync
+    sText As String
+    sTitle As String
+    dwStyle As VbMsgBoxStyle
+    id As Long
+End Type
+
+Private Type MsgAsyncPtr
+    sText As LongPtr
+    sTitle As LongPtr
+    dwStyle As VbMsgBoxStyle
+    id As Long
+End Type
+    
+Private mHwnd As LongPtr
+Private nOpen As Long
+Private mThreads() As LongPtr
+Private nT As Long
+     
+Private Const WM_ASYNCMBRESULT = WM_USER + 101
+    
+Public Sub Show(ByVal sText As String, _
+                        Optional ByVal MsgBoxStyle As VbMsgBoxStyle = vbOKOnly, _
+                        Optional ByVal sTitle As String = App.title, _
+                        Optional ByVal nID As Long = -1)
+    With CType(Of MsgAsyncPtr)(CoTaskMemAlloc(LenB(Of MsgAsyncPtr)))
+        .sText = SysAllocStringPtr(sText)
+        .sTitle = SysAllocStringPtr(sTitle)
+        .dwStyle = MsgBoxStyle
+        .id = If(nID = -1, nT, nID)
+        Dim tid As Long
+        ReDim Preserve mThreads(nT)
+        mThreads(nT) = CreateThread(ByVal vbNullPtr, vbNullPtr, AddressOf MsgAsyncProc, ByVal VarPtr(.sText), 0, tid)
+        nT += 1
+        nOpen += 1
+    End With
+End Sub
+    
+Public Property Get OpenCount() As Long
+    Return nOpen
+End Property
+    
+Private Function MsgAsyncProc(MsgAsync As MsgAsync) As Long
+    With MsgAsync
+        Dim r As VbMsgBoxResult = MsgBox(.sText, .dwStyle, .sTitle)
+        If mHwnd Then PostMessage(mHwnd, WM_ASYNCMBRESULT, .id, ByVal r)
+        .sText = vbNullString: .sTitle = vbNullString
+        CoTaskMemFree VarPtr(MsgAsync)
+    End With
+End Function
+    
+Private Sub Class_Initialize()
+    mHwnd = CreateWindowExW(0&, StrPtr(WC_STATIC), 0, 0, 0, 0, 0, 0, 0, 0&, App.hInstance, ByVal 0&)
+    Subclass2 mHwnd, AddressOf Subclassproc
+End Sub
+Private Sub Class_Terminate()
+    CloseAll()
+    DestroyWindow(mHwnd)
+End Sub
+    
+Private Function Subclass2(hWnd As LongPtr, lpFN As LongPtr, Optional uId As LongPtr = 0&, Optional dwRefData As LongPtr = 0&) As Boolean
+If uId = 0 Then uId = hWnd
+    Subclass2 = SetWindowSubclass(hWnd, lpFN, uId, dwRefData):      Debug.Assert Subclass2
+End Function
+Private Function UnSubclass2(hWnd As LongPtr, ByVal lpFN As LongPtr, pid As LongPtr) As Boolean
+    UnSubclass2 = RemoveWindowSubclass(hWnd, lpFN, pid)
+End Function
+
+Private Function Subclassproc(ByVal hWnd As LongPtr, ByVal uMsg As Long, ByVal wParam As LongPtr, ByVal lParam As LongPtr, ByVal uIdSubclass As LongPtr, ByVal dwRefData As LongPtr) As LongPtr
+    Select Case uMsg
+    Case WM_ASYNCMBRESULT
+        RaiseEvent GotResult(CLng(wParam), DCast(Of Long)(lParam))
+        nOpen -= 1
+    Case WM_DESTROY
+        Call UnSubclass2(hWnd, AddressOf Subclassproc, uIdSubclass)
+End Select
+Return DefSubclassProc(hWnd, uMsg, wParam, lParam)
+End Function
+    
+    
+Public Sub CloseAll()
+    If nT = 0 Then Exit Sub
+    
+    ' Close any open MessageBox windows first
+    Dim i As Long
+    For i = 0 To nT - 1
+        If mThreads(i) <> 0 Then
+            EnumThreadWindows GetThreadId(mThreads(i)), AddressOf CloseThreadMsgBox, 0
+        End If
+    Next i
+    
+    ' Now safe to wait - windows are closed so threads will exit
+    WaitForMultipleObjects nT, mThreads(0), 1, 3000
+    
+    ' Clean up handles
+    For i = 0 To nT - 1
+        If mThreads(i) <> 0 Then
+            TerminateThread mThreads(i), 1
+            mThreads(i) = 0
+        End If
+    Next i
+    
+    nT = 0
+    ReDim mThreads(0)
+End Sub
+
+Private Function CloseThreadMsgBox(ByVal hwnd As LongPtr, ByVal lParam As LongPtr) As Long
+    Dim cls As String = Space(256)
+    GetClassName hwnd, cls, 255
+    
+    ' MessageBox windows have class "#32770" (same as Dialog)
+    If Left$(cls, 6) = "#32770" Then
+        EndDialog(hwnd, 0)
+    End If
+    
+    CloseThreadMsgBox = 1 ' Continue enumeration
+End Function
+
+End Class
